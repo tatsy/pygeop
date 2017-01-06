@@ -1,4 +1,5 @@
 import math
+from ..exception import PygpException
 
 class Vector(object):
     def __init__(self, x, y, z):
@@ -15,12 +16,19 @@ class Vector(object):
         z = self.z * v.y - self.y * v.x
         return Vector(x, y, z)
 
-    @staticmethod
-    def normalize(v):
-        return v / v.norm()
+    def normalize(self):
+        try:
+            self = self / self.norm()
+        except ZeroDivisionError:
+            raise PygpException('Vector length is zero!')
+
+        return self
 
     def norm(self):
-        return math.sqrt(Vector.dot(self, self))
+        return math.sqrt(self.norm2())
+
+    def norm2(self):
+        return self.dot(self)
 
     def __add__(self, v):
         return Vector(self.x + v.x, self.y + v.y, self.z + v.z)
