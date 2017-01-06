@@ -7,40 +7,40 @@ from .halfedge import Halfedge
 from .face import Face
 
 class TriMesh(object):
-    def __init__(self):
+    def __init__(self, filename=''):
         self.vertices = []
         self.halfedges = []
         self.faces = []
         self.indices = []
 
+        if filename != '':
+            self.load(filename)
+
     def load(self, filename):
-        fp = open(filename, 'r')
+        with open(filename, 'r') as fp:
+            self.clear()
+            temp_vertices = []
+            temp_indices = []
+            for l in fp:
+                l = l.strip()
+                if l.startswith('v '):
+                    v = [ float(it) for it in re.split('\s+', l)[1:] ]
+                    temp_vertices.append((v[0], v[1], v[2]))
 
-        self.clear()
-        temp_vertices = []
-        temp_indices = []
-        for l in fp:
-            l = l.strip()
-            if l.startswith('v '):
-                v = [ float(it) for it in re.split('\s+', l)[1:] ]
-                temp_vertices.append((v[0], v[1], v[2]))
+                if l.startswith('f '):
+                    f = [ int(it) - 1 for it in re.split('\s+', l)[1:] ]
+                    temp_indices.extend([ f[0], f[1], f[2] ])
 
-            if l.startswith('f '):
-                f = [ int(it) - 1 for it in re.split('\s+', l)[1:] ]
-                temp_indices.extend([ f[0], f[1], f[2] ])
+            unique_vertices = {}
+            for i in temp_indices:
+                v = temp_vertices[i]
 
-        unique_vertices = {}
-        for i in temp_indices:
-            v = temp_vertices[i]
+                if v not in unique_vertices:
+                    unique_vertices[v] = len(self.vertices)
+                    self.vertices.append(Vertex(v[0], v[1], v[2]))
+                    self.vertices[-1].index = unique_vertices[v]
 
-            if v not in unique_vertices:
-                unique_vertices[v] = len(self.vertices)
-                self.vertices.append(Vertex(v[0], v[1], v[2]))
-                self.vertices[-1].index = unique_vertices[v]
-
-            self.indices.append(unique_vertices[v])
-
-        fp.close()
+                self.indices.append(unique_vertices[v])
 
         self._make_halfedge()
 

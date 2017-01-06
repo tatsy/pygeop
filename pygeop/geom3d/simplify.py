@@ -51,15 +51,17 @@ class UnionFindTree(object):
         return self.root(x) == self.root(y)
 
 def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
-    N_v = mesh.n_vertices()
+    nv = mesh.n_vertices()
 
-    n_remove = int(N_v * (1.0 - ratio))
+    # How many vertices are removed?
+    n_remove = 5000 #int(nv * (1.0 - ratio))
     if remains > 0:
         if remains <= 3:
             raise PygpException('remainig vertices must be more than 3!')
-        n_remove = N_v - remains
+        n_remove = nv - remains
 
-    Qs = [ np.zeros((4, 4)) for i in range(N_v) ]
+    # Compute matrix Q
+    Qs = [ np.zeros((4, 4)) for i in range(nv) ]
     for t in mesh.faces:
         vs = list(t.vertices())
 
@@ -75,12 +77,13 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
         Qs[vs[1].index] += Q
         Qs[vs[2].index] += Q
 
+    # Push QEMs
     pque = PriorityQueue()
     for he in mesh.halfedges:
         i1 = he.vertex_from.index
         i2 = he.vertex_to.index
-        v1 = he.vertex_from.position()
-        v2 = he.vertex_to.position()
+        v1 = he.vertex_from.position
+        v2 = he.vertex_to.position
         v_bar = 0.5 * (v1 + v2)
         Q1 = Qs[i1]
         Q2 = Qs[i2]
@@ -88,23 +91,21 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
         qem = float(np.dot(v_bar, np.dot(Q1 + Q2, v_bar)))
         pque.push((qem, i1, i2))
 
-
-    trial = 0
-    uftree = UnionFindTree(N_v)
-    while trial < n_remove:
+    removed = 0
+    uftree = UnionFindTree(nv)
+    while removed < n_remove:
         # Find edge with minimum QEM
-        minindex = (-1, -1)
-        minvalue = 1.0e20
         v, ii, jj = pque.pop()
-        if mesh.vertices[ii] is None or mesh.vertices[jj] is None:
-            continue
+        assert ii != jj
 
+        # Take vertex pair
         v_i = mesh.vertices[ii]
         v_j = mesh.vertices[jj]
-        assert v_i is not None and v_j is not None
-        assert v_i.index != v_j.index
+        if v_i is None or v_j is None:
+            # None vertex is already removed
+            continue
 
-        # Rotate v_i's halfedge
+        # Rotate v_i's halfedge so that it does not in the removed face.
         if v_i.halfedge.next.vertex_to == v_j:
             v_i.halfedge = v_i.halfedge.opposite.next
             if v_i.halfedge.vertex_to == v_j:
@@ -115,83 +116,100 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
             if v_i.halfedge.next.vertex_to == v_j:
                 v_i.halfedge = v_i.halfedge.opposite.next
 
-        #assert v_i.halfedge.vertex_to != v_j and v_i.halfedge.next.vertex_to != v_j
+        assert v_i.halfedge.vertex_to.index != v_j.index and \
+               v_i.halfedge.next.vertex_to.index != v_j.index
 
-        for he_j in list(v_j.halfedges()):
-            if he_j.vertex_to == v_i:
-                continue
+        # Update oppsite halfedges
+        he_i_j = None
+        for he_i in v_i.halfedges():
+            if he_i.vertex_to == v_j:
+                he_i_j = he_i
+                break
 
-            he_j.vertex_from = v_i
-            he_j.opposite.vertex_to = v_i
+        assert he_i_j is not None
+        he_j_i = he_i_j.opposite
 
-            for he_i in v_i.halfedges():
-                if he_i.vertex_to != he_j.vertex_to:
-                    continue
+        if he_i_j.next.vertex_to.halfedge == he_i_j.next.next:
+            he_i_j.next.vertex_to.halfedge = he_i_j.next.next.opposite.next
 
-                if he_i.next.vertex_to != v_j and he_j.next.vertex_to == v_i or \
-                   he_i.next.vertex_to == v_j and he_j.next.vertex_to != v_i:
+        if he_j_i.next.vertex_to.halfedge == he_j_i.next.next:
+            he_j_i.next.vertex_to.halfedge = he_j_i.next.next.opposite.next
 
-                       he_j.opposite = he_i.opposite
-                       he_i.opposite = he_j.opposite
+        he_i_j.next.opposite.opposite, he_i_j.next.next.opposite.opposite = \
+            he_i_j.next.next.opposite, he_i_j.next.opposite
 
-        v_new = 0.5 * (v_i.position() + v_j.position())
-        v_i.x = v_new.x
-        v_i.y = v_new.y
-        v_i.z = v_new.z
+        he_j_i.next.opposite.opposite, he_j_i.next.next.opposite.opposite = \
+            he_j_i.next.next.opposite, he_j_i.next.opposite
 
+        # Update position
+        v_new = 0.5 * (v_i.position + v_j.position)
+        v_i.position = v_new
+
+        # update halfedge destinations
+        for he in v_i.halfedges():
+            he.vertex_from = v_i
+            he.opposite.vertex_to = v_i
+
+        assert v_i not in v_i.vertices()
+
+        # Manage merged vertex indices
         mesh.vertices[v_j.index] = None
         uftree.merge(v_i.index, v_j.index)
         assert v_i.index == uftree.root(v_j.index)
 
-        Qs[v_i.index] = np.zeros((4, 4))
-        for he in v_i.halfedges():
-            vs = []
-            he_it = he
-            while True:
-                vs.append(he_it.vertex_to)
-                he_it = he_it.next
-                if he_it == he:
-                    break
+        # Update matrix Q
+        update_vertices = [ v_i ] #[ v for v in v_i.vertices() ] + [ v_i ]
+        for v in update_vertices:
+            Qs[v.index] = np.zeros((4, 4))
+            for he in v.halfedges():
+                vs = []
+                he_it = he
+                while True:
+                    vs.append(he_it.vertex_to)
+                    he_it = he_it.next
+                    if he_it == he:
+                        break
 
-            assert len(vs) == 3
+                assert len(vs) == 3
 
-            ps = [ Vector(v.x, v.y, v.z) for v in vs ]
-            norm = (ps[2] - ps[0]).cross(ps[1] - ps[0])
-            if norm.norm() == 0.0:
-                continue
+                ps = [ Vector(v.x, v.y, v.z) for v in vs ]
+                norm = (ps[2] - ps[0]).cross(ps[1] - ps[0])
+                if norm.norm() == 0.0:
+                    continue
 
-            norm = Vector.normalize(norm)
+                d = -norm.normalize().dot(ps[0])
+                pp = np.array([ norm.x, norm.y, norm.z, d ])
+                Q = pp.reshape((pp.size, -1)) * pp
+                Qs[v_i.index] += Q
 
-            d = -norm.dot(ps[0])
-            pp = np.array([ norm.x, norm.y, norm.z, d ])
-            Q = pp.reshape((pp.size, -1)) * pp
-            Qs[v_i.index] += Q
+        # Update QEMs
+        for v in update_vertices:
+            for u in v.vertices():
+                i1 = v.index
+                i2 = u.index
+                assert i1 != i2
 
-        for u in v_i.vertices():
-            i1 = v_i.index
-            i2 = u.index
-            assert i1 != i2
+                v1 = v.position
+                v2 = u.position
+                v_bar = 0.5 * (v1 + v2)
+                Q1 = Qs[i1]
+                Q2 = Qs[i2]
+                v_bar = np.array([ v_bar.x, v_bar.y, v_bar.z, 1.0 ])
+                qem = float(np.dot(v_bar, np.dot(Q1 + Q2, v_bar)))
+                pque.push((qem, i1, i2))
 
-            v1 = v_i.position()
-            v2 = u.position()
-            v_bar = 0.5 * (v1 + v2)
-            Q1 = Qs[i1]
-            Q2 = Qs[i2]
-            v_bar = np.array([ v_bar.x, v_bar.y, v_bar.z, 1.0 ])
-            qem = float(np.dot(v_bar, np.dot(Q1 + Q2, v_bar)))
-            pque.push((qem, i1, i2))
-
-        trial += 1
+        # Progress
+        removed += 1
         if show_progress:
             print('.', end='', flush=True)
-            if trial % 100 == 0:
-                print(' {}'.format(trial))
+            if removed % 100 == 0:
+                print(' {}'.format(removed))
 
     print('{} vertices removed!'.format(n_remove))
 
-    # Save
+    # Compact vertices and update indices for faces
     count = 0
-    new_index = [ 0 ] * N_v
+    new_index = [ 0 ] * nv
     for i, v in enumerate(mesh.vertices):
         new_index[i] = count
         if v is not None:

@@ -92,8 +92,9 @@ class TestVector(unittest.TestCase):
             v / 0.0
 
     def test_repr(self):
+        v = Vector(1.0, 2.0, 3.0)
         try:
-            print(self)
+            print(v)
         except ExceptionType:
             self.fail("Vector.__repr__ raised Exception unexpectedly!")
 

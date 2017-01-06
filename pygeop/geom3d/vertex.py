@@ -1,7 +1,7 @@
 from .vector import Vector
 
 class Vertex(object):
-    def __init__(self, x, y, z):
+    def __init__(self, x=0.0, y=0.0, z=0.0):
         self.x = x
         self.y = y
         self.z = z
@@ -9,20 +9,25 @@ class Vertex(object):
         self.halfedge = None
 
     def copy(self):
-        return Vertex(self.x, self.y, self.z)
+        v = Vertex(self.x, self.y, self.z)
+        v.index = self.index
+        v.halfedge = self.halfedge
+        return v
 
-    def position(self):
+    def _position(self):
         return Vector(self.x, self.y, self.z)
 
-    def setPosition(self, p):
+    def _set_position(self, p):
         self.x = p.x
         self.y = p.y
         self.z = p.z
 
+    position = property(_position, _set_position)
+
     @staticmethod
     def distance(v1, v2):
-        p1 = v1.position()
-        p2 = v2.position()
+        p1 = v1.position
+        p2 = v2.position
         return (p1 - p2).norm()
 
     def halfedges(self):
