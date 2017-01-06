@@ -1,12 +1,11 @@
-import sys
 from itertools import chain
 from heapq import *
 
 import numpy as np
 
-from .trimesh import *
-
-filename = "data/bunny.obj"
+from ..exception import PygpException
+from .trimesh import TriMesh
+from .vector import Vector
 
 class PriorityQueue(object):
     def __init__(self):
@@ -51,12 +50,15 @@ class UnionFindTree(object):
     def same(self, x, y):
         return self.root(x) == self.root(y)
 
-
-def main():
-    mesh = Mesh()
-    mesh.load(filename)
-
+def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
     N_v = mesh.n_vertices()
+
+    n_remove = int(N_v * (1.0 - ratio))
+    if remains > 0:
+        if remains <= 3:
+            raise PygpException('remainig vertices must be more than 3!')
+        n_remove = N_v - remains
+
     Qs = [ np.zeros((4, 4)) for i in range(N_v) ]
     for t in mesh.faces:
         vs = list(t.vertices())
@@ -77,8 +79,8 @@ def main():
     for he in mesh.halfedges:
         i1 = he.vertex_from.index
         i2 = he.vertex_to.index
-        v1 = he.vertex_from.to_v()
-        v2 = he.vertex_to.to_v()
+        v1 = he.vertex_from.position()
+        v2 = he.vertex_to.position()
         v_bar = 0.5 * (v1 + v2)
         Q1 = Qs[i1]
         Q2 = Qs[i2]
@@ -87,10 +89,9 @@ def main():
         pque.push((qem, i1, i2))
 
 
-    n_trials = 30000
     trial = 0
     uftree = UnionFindTree(N_v)
-    while trial < n_trials:
+    while trial < n_remove:
         # Find edge with minimum QEM
         minindex = (-1, -1)
         minvalue = 1.0e20
@@ -133,7 +134,7 @@ def main():
                        he_j.opposite = he_i.opposite
                        he_i.opposite = he_j.opposite
 
-        v_new = 0.5 * (v_i.to_v() + v_j.to_v())
+        v_new = 0.5 * (v_i.position() + v_j.position())
         v_i.x = v_new.x
         v_i.y = v_new.y
         v_i.z = v_new.z
@@ -171,8 +172,8 @@ def main():
             i2 = u.index
             assert i1 != i2
 
-            v1 = v_i.to_v()
-            v2 = u.to_v()
+            v1 = v_i.position()
+            v2 = u.position()
             v_bar = 0.5 * (v1 + v2)
             Q1 = Qs[i1]
             Q2 = Qs[i2]
@@ -181,9 +182,12 @@ def main():
             pque.push((qem, i1, i2))
 
         trial += 1
-        print('.', end='', flush=True)
-        if trial % 50 == 0:
-            print(' {}'.format(trial))
+        if show_progress:
+            print('.', end='', flush=True)
+            if trial % 100 == 0:
+                print(' {}'.format(trial))
+
+    print('{} vertices removed!'.format(n_remove))
 
     # Save
     count = 0
@@ -193,35 +197,20 @@ def main():
         if v is not None:
             count += 1
 
-    with open('output.obj', 'w') as fp:
-        for v in mesh.vertices:
-            if v is not None:
-                fp.write('v {0} {1} {2}\n'.format(v.x, v.y, v.z))
+    mesh.vertices = [ v for v in mesh.vertices if v is not None ]
+    for i in range(0, len(mesh.indices), 3):
+        i0 = mesh.indices[i + 0]
+        i1 = mesh.indices[i + 1]
+        i2 = mesh.indices[i + 2]
 
-        for i in range(0, len(mesh.indices), 3):
-            i0 = mesh.indices[i + 0]
-            i1 = mesh.indices[i + 1]
-            i2 = mesh.indices[i + 2]
+        i0 = uftree.root(i0)
+        i1 = uftree.root(i1)
+        i2 = uftree.root(i2)
 
-            i0 = uftree.root(i0)
-            i1 = uftree.root(i1)
-            i2 = uftree.root(i2)
+        i0 = new_index[i0]
+        i1 = new_index[i1]
+        i2 = new_index[i2]
 
-            assert mesh.vertices[i0] is not None and \
-                   mesh.vertices[i1] is not None and \
-                   mesh.vertices[i2] is not None
-
-            i0 = new_index[i0]
-            i1 = new_index[i1]
-            i2 = new_index[i2]
-            assert i0 >= 0 and i0 < mesh.n_vertices() and \
-                   i1 >= 0 and i1 < mesh.n_vertices() and \
-                   i2 >= 0 and i2 < mesh.n_vertices()
-
-            if i0 == i1 or i0 == i2 or i1 == i2:
-                continue
-
-            fp.write('f {0} {1} {2}\n'.format(i0 + 1, i1 + 1, i2 + 1))
-
-if __name__ == '__main__':
-    main()
+        mesh.indices[i + 0] = i0
+        mesh.indices[i + 1] = i1
+        mesh.indices[i + 2] = i2

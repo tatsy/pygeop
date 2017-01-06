@@ -11,15 +11,19 @@ class Vertex(object):
     def copy(self):
         return Vertex(self.x, self.y, self.z)
 
-    def to_v(self):
+    def position(self):
         return Vector(self.x, self.y, self.z)
+
+    def setPosition(self, p):
+        self.x = p.x
+        self.y = p.y
+        self.z = p.z
 
     @staticmethod
     def distance(v1, v2):
-        dx = v1.x - v2.x
-        dy = v1.y - v2.y
-        dz = v1.z - v2.z
-        return math.sqrt(dx * dx + dy * dy + dz * dz)
+        p1 = v1.position()
+        p2 = v2.position()
+        return (p1 - p2).norm()
 
     def halfedges(self):
         he = self.halfedge

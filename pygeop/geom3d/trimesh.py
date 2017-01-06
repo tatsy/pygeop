@@ -1,32 +1,12 @@
 import re
 import math
+
 from .vector import Vector
+from .vertex import Vertex
+from .halfedge import Halfedge
+from .face import Face
 
-class Halfedge(object):
-    def __init__(self):
-        self.vertex_from = None
-        self.vertex_to = None
-        self.face = None
-        self.next = None
-        self.opposite = None
-
-    def __repr__(self):
-        return '{0} -> {1}'.format(self.vertex_from.index, self.vertex_to.index)
-
-class Face(object):
-    def __init__(self):
-        self.halfedge = None
-
-    def vertices(self):
-        he = self.halfedge
-        while True:
-            yield he.vertex_from
-
-            he = he.next
-            if he == self.halfedge:
-                break
-
-class Mesh(object):
+class TriMesh(object):
     def __init__(self):
         self.vertices = []
         self.halfedges = []
@@ -63,6 +43,17 @@ class Mesh(object):
         fp.close()
 
         self._make_halfedge()
+
+    def save(self, filename):
+        with open(filename, 'w') as fp:
+            for v in self.vertices:
+                fp.write('v {0:.6f} {1:.6f} {2:.6f}\n'.format(v.x, v.y, v.z))
+
+            for i in range(0, len(self.indices), 3):
+                i0 = self.indices[i + 0] + 1
+                i1 = self.indices[i + 1] + 1
+                i2 = self.indices[i + 2] + 1
+                fp.write('f {0} {1} {2}\n'.format(i0, i1, i2))
 
     def n_vertices(self):
         return len(self.vertices)
