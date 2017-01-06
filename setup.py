@@ -3,7 +3,7 @@ from setuptools.command.install import install
 
 class Installer(install):
     def run(self):
-        super(Installer, self).run(self)
+        super(Installer, self).run()
 
 setup(
     cmdclass={ 'install' : Installer },
