@@ -43,13 +43,10 @@ class Vertex(object):
                 break
 
     def vertices(self):
-        he = self.halfedge
-        while True:
-            yield he.vertex_to
+        return ( he.vertex_to for he in self.halfedges() )
 
-            he = he.opposite.next
-            if he == self.halfedge:
-                break
+    def faces(self):
+        return ( he.face for he in self.halfedges() )
 
     def __eq__(self, v):
         return self.x == v.x and self.y == v.y and self.z == v.z

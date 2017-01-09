@@ -1,3 +1,4 @@
+import math
 import time
 from itertools import chain
 from heapq import *
@@ -96,19 +97,6 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
             raise PygpException('remainig vertices must be more than 3!')
         n_remove = nv - remains
 
-    # Extract neighboring vertices
-    neighbor_verts = [ [] for i in range(nv) ]
-    for v_i in mesh.vertices:
-        neighbor_verts[v_i.index] = set([ v.index for v in v_i.vertices() ])
-
-    neighbor_faces = [ [] for i in range(nv) ]
-    for i, f in enumerate(mesh.faces):
-        for v in f.vertices():
-            neighbor_faces[v.index].append(i)
-
-    for i in range(nv):
-        neighbor_faces[i] = set(neighbor_faces[i])
-
     # Compute matrix Q
     Qs = [ np.zeros((4, 4)) for i in range(nv) ]
     for t in mesh.faces:
@@ -149,46 +137,40 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
         except IndexError:
             break
 
-        qem, v_i, v_j, v_bar = qn.value, qn.ii, qn.jj, qn.vec
-        assert v_i != v_j
-        if mesh.vertices[v_i] is None or mesh.vertices[v_j] is None:
+        ii, jj, v_bar = qn.ii, qn.jj, qn.vec
+        assert ii != jj
+
+        v_i = mesh.vertices[ii]
+        v_j = mesh.vertices[jj]
+        if v_i is None or v_j is None:
             # None vertex is already removed
             continue
 
         # Vertex with degree less than 4 should not be contracted
-        if len(neighbor_verts[v_i]) <= 3 or \
-           len(neighbor_verts[v_j]) <= 3:
+        if v_i.degree() <= 3 or v_j.degree() <= 3:
             continue
-
-        # Get the list of vertices around v_i and v_j
-        new_neighbor_verts = neighbor_verts[v_i].union(neighbor_verts[v_j])
-        try:
-            new_neighbor_verts.remove(v_i)
-            new_neighbor_verts.remove(v_j)
-        except KeyError as e:
-            print(e.message)
-
-        new_neighbor_faces = neighbor_faces[v_i].symmetric_difference(neighbor_faces[v_j])
-        remove_faces = neighbor_faces[v_i].intersection(neighbor_faces[v_j])
 
         # Check face flip
         is_flip = False
-        for i in new_neighbor_faces:
-            vs = list(mesh.faces[i].vertices())
-            vs = [ mesh.vertices[uftree.root(v.index)] for v in vs ]
+        for f in chain(v_i.faces(), v_j.faces()):
+            vs = list(f.vertices())
             assert len(vs) == 3
+
+            if any([ v is v_i for v in vs ]) and any([ v is v_j for v in vs ]):
+                # This is collpased face
+                continue
 
             ps = [ v.position for v in vs ]
             norm_before = (ps[1] - ps[0]).cross(ps[2] - ps[0])
 
-            is_find = False
+            is_found = False
             for i, v in enumerate(vs):
-                if v.index == v_i or v.index == v_j:
+                if v is v_i or v is v_j:
                     ps[i] = v_bar
-                    is_find = True
+                    is_found = True
                     break
 
-            assert is_find
+            assert is_found
 
             norm_after = (ps[1] - ps[0]).cross(ps[2] - ps[0])
 
@@ -201,53 +183,46 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
 
         # Check face degeneration
         is_degenerate = False
-        for i in new_neighbor_verts:
-            if v_j in neighbor_verts[i]:
-                if len(neighbor_verts[i]) < 4:
-                    is_degenerate = True
-                    break
-            else:
-                if len(neighbor_verts[i]) < 3:
-                    is_degenerate = True
-                    break
+        is_degenerate |= any([ v.degree() < 3 for v in v_i.vertices() if v is not v_j ])
+        is_degenerate |= any([ v.degree() < 4 for v in v_j.vertices() if v is not v_i ])
 
         if is_degenerate:
             continue
 
-        for i in neighbor_verts[v_j]:
-            try:
-                neighbor_verts[i].remove(v_j)
-            except KeyError as e:
-                print(e.message)
+        # Collapse halfedge
+        mesh.collapse_halfedge(v_j, v_i, v_bar)
+        uftree.merge(v_i.index, v_j.index)
+        assert v_i.index == uftree.root(v_j.index)
 
-            neighbor_verts[i].add(v_i)
+        # Check triangle shapes
+        is_update = True
+        while is_update:
+            is_update = False
+            for he in v_i.halfedges():
+                v0 = he.next.vertex_to.position
+                v1 = he.vertex_to.position
+                v2 = he.vertex_from.position
+                v3 = he.opposite.next.vertex_to.position
 
-        for i in new_neighbor_verts:
-            neighbor_faces[i] = neighbor_faces[i].difference(remove_faces)
+                e0 = v1 - v0
+                e1 = v2 - v0
+                a1 = math.acos(e0.dot(e1) / (e0.norm() * e1.norm()))
 
-        for i in remove_faces:
-            mesh.indices[i * 3 + 0] = -1
-            mesh.indices[i * 3 + 1] = -1
-            mesh.indices[i * 3 + 2] = -1
+                e2 = v1 - v3
+                e3 = v2 - v3
+                a2 = math.acos(e2.dot(e3) / (e2.norm() * e3.norm()))
 
-        neighbor_verts[v_i] = new_neighbor_verts
-        neighbor_verts[v_j] = None
-        neighbor_faces[v_i] = new_neighbor_faces
-        neighbor_faces[v_j] = None
-
-        # Manage merged vertex indices
-        mesh.vertices[v_i].position = v_bar
-        mesh.vertices[v_j] = None
-        uftree.merge(v_i, v_j)
-        assert v_i == uftree.root(v_j)
+                if a1 + a2 > math.pi:
+                    mesh.flip_halfedge(he)
+                    is_update = True
+                    break
 
         # Update matrix Q
-        update_vertices = neighbor_verts[v_i].union([ v_i ])
-        for i in update_vertices:
-            Qs[i] = np.zeros((4, 4))
-            for j in neighbor_faces[i]:
-                vs = list(mesh.faces[j].vertices())
-                vs = [ mesh.vertices[uftree.root(v.index)] for v in vs ]
+        update_vertices = chain([ v_i ], v_i.vertices())
+        for v in update_vertices:
+            Qs[v.index] = np.zeros((4, 4))
+            for f in mesh.vertices[v.index].faces():
+                vs = list(f.vertices())
                 assert len(vs) == 3
 
                 ps = [ v.position for v in vs ]
@@ -258,29 +233,27 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
                 d = -norm.dot(ps[0])
                 pp = np.array([ norm.x, norm.y, norm.z, d ])
                 Q = pp.reshape((pp.size, 1)) * pp
-                Qs[i] += w * Q
+                Qs[v.index] += w * Q
 
         # Update QEMs
-        for i in update_vertices:
-            for j in neighbor_verts[i]:
-                assert i != j
-                assert mesh.vertices[i] is not None
-                assert mesh.vertices[j] is not None
+        for v1 in update_vertices:
+            for v2 in v1.vertices():
+                assert v1.index != v2.index
+                assert mesh.vertices[v1.index] is not None
+                assert mesh.vertices[v2.index] is not None
 
-                if len(neighbor_verts[i]) <= 3: continue
-                if len(neighbor_verts[j]) <= 3: continue
+                if v1.degree() <= 3: continue
+                if v2.degree() <= 3: continue
 
-                v1 = mesh.vertices[i].position
-                v2 = mesh.vertices[j].position
-                Q1 = Qs[i]
-                Q2 = Qs[j]
-                qem, v_bar = compute_QEM(Q1, Q2, v1, v2)
+                Q1 = Qs[v1.index]
+                Q2 = Qs[v2.index]
+                qem, v_bar = compute_QEM(Q1, Q2, v1.position, v2.position)
                 pque.push(QEMNode(qem, i, j, v_bar))
 
         # Progress
         removed += 1
         if show_progress:
-            if removed == n_remove or removed % (n_remove // 1000) == 0:
+            if removed == n_remove or removed % max(1, n_remove // 1000) == 0:
                 progress_bar(removed, n_remove)
 
     print('')
@@ -288,36 +261,4 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
     print('{:.2f} sec elapsed!'.format(time.clock() - start_time))
 
     # Compact vertices and update indices for faces
-    count = 0
-    new_index_table = [ 0 ] * mesh.n_vertices()
-    for i, v in enumerate(mesh.vertices):
-        new_index_table[i] = count
-        if v is not None:
-            count += 1
-
-    mesh.vertices = [ v for v in mesh.vertices if v is not None ]
-    for i, v in enumerate(mesh.vertices):
-        v.index = i
-
-    new_indices = [ -1 ] * len(mesh.indices)
-    for i in range(0, len(mesh.indices), 3):
-        i0 = mesh.indices[i + 0]
-        i1 = mesh.indices[i + 1]
-        i2 = mesh.indices[i + 2]
-
-        i0 = uftree.root(i0)
-        i1 = uftree.root(i1)
-        i2 = uftree.root(i2)
-
-        i0 = new_index_table[i0]
-        i1 = new_index_table[i1]
-        i2 = new_index_table[i2]
-        if i0 == i1 or i1 == i2 or i2 == i0:
-            continue
-
-        new_indices[i + 0] = i0
-        new_indices[i + 1] = i1
-        new_indices[i + 2] = i2
-
-    mesh.indices = list(filter(lambda i : i >= 0, new_indices))
-    mesh._make_halfedge()
+    mesh.clean()

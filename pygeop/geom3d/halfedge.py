@@ -5,6 +5,7 @@ class Halfedge(object):
         self.face = None
         self.next = None
         self.opposite = None
+        self.index = -1
 
     def __eq__(self, he):
         if self.vertex_from is None or self.vertex_to is None: return False
