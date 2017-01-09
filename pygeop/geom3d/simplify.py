@@ -1,3 +1,4 @@
+import time
 from itertools import chain
 from heapq import *
 
@@ -61,6 +62,16 @@ class QEMNode(object):
     def __lt__(self, n):
         return (self.value, self.ii, self.jj).__lt__((n.value, n.ii, n.jj))
 
+def progress_bar(x, total, width=50):
+    ratio = (x + 0.5) / total
+    tick = int(width * ratio)
+    bar = [ '=' ] * tick + [ ' ' ] * (width - tick)
+    if tick != width:
+        bar[tick] = '>'
+
+    bar = ''.join(bar)
+    print('[ {0:6.2f} % ] [ {1} ]'.format(100.0 * ratio, bar), end='\r', flush=True)
+
 def compute_QEM(Q1, Q2, v1, v2):
     Q = np.identity(4)
     Q[:3, :4] = (Q1 + Q2)[:3, :4]
@@ -75,6 +86,7 @@ def compute_QEM(Q1, Q2, v1, v2):
     return qem, Vector(v_bar[0], v_bar[1], v_bar[2])
 
 def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
+    start_time = time.clock()
     nv = mesh.n_vertices()
 
     # How many vertices are removed?
@@ -144,8 +156,8 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
             continue
 
         # Vertex with degree less than 4 should not be contracted
-        if len(neighbor_verts[v_i]) <= 4 or \
-           len(neighbor_verts[v_j]) <= 4:
+        if len(neighbor_verts[v_i]) <= 3 or \
+           len(neighbor_verts[v_j]) <= 3:
             continue
 
         # Get the list of vertices around v_i and v_j
@@ -163,18 +175,24 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
         is_flip = False
         for i in new_neighbor_faces:
             vs = list(mesh.faces[i].vertices())
+            vs = [ mesh.vertices[uftree.root(v.index)] for v in vs ]
             assert len(vs) == 3
 
             ps = [ v.position for v in vs ]
             norm_before = (ps[1] - ps[0]).cross(ps[2] - ps[0])
 
+            is_find = False
             for i, v in enumerate(vs):
                 if v.index == v_i or v.index == v_j:
                     ps[i] = v_bar
+                    is_find = True
+                    break
+
+            assert is_find
 
             norm_after = (ps[1] - ps[0]).cross(ps[2] - ps[0])
 
-            if norm_before.dot(norm_after) < 0.0:
+            if norm_before.dot(norm_after) <= 1.0e-6:
                 is_flip = True
                 break
 
@@ -185,11 +203,11 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
         is_degenerate = False
         for i in new_neighbor_verts:
             if v_j in neighbor_verts[i]:
-                if len(neighbor_verts[i]) <= 4:
+                if len(neighbor_verts[i]) < 4:
                     is_degenerate = True
                     break
             else:
-                if len(neighbor_verts[i]) <= 3:
+                if len(neighbor_verts[i]) < 3:
                     is_degenerate = True
                     break
 
@@ -229,10 +247,11 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
             Qs[i] = np.zeros((4, 4))
             for j in neighbor_faces[i]:
                 vs = list(mesh.faces[j].vertices())
+                vs = [ mesh.vertices[uftree.root(v.index)] for v in vs ]
                 assert len(vs) == 3
 
                 ps = [ v.position for v in vs ]
-                norm = (ps[2] - ps[0]).cross(ps[1] - ps[0])
+                norm = (ps[1] - ps[0]).cross(ps[2] - ps[0])
                 w = norm.norm()
                 norm = norm / w
 
@@ -248,20 +267,25 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
                 assert mesh.vertices[i] is not None
                 assert mesh.vertices[j] is not None
 
+                if len(neighbor_verts[i]) <= 3: continue
+                if len(neighbor_verts[j]) <= 3: continue
+
                 v1 = mesh.vertices[i].position
                 v2 = mesh.vertices[j].position
                 Q1 = Qs[i]
                 Q2 = Qs[j]
                 qem, v_bar = compute_QEM(Q1, Q2, v1, v2)
+                pque.push(QEMNode(qem, i, j, v_bar))
 
         # Progress
         removed += 1
         if show_progress:
-            print('.', end='', flush=True)
-            if removed % 100 == 0:
-                print(' {}'.format(removed))
+            if removed == n_remove or removed % (n_remove // 1000) == 0:
+                progress_bar(removed, n_remove)
 
+    print('')
     print('{} vertices removed!'.format(n_remove))
+    print('{:.2f} sec elapsed!'.format(time.clock() - start_time))
 
     # Compact vertices and update indices for faces
     count = 0
