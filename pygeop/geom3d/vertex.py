@@ -30,6 +30,9 @@ class Vertex(object):
         p2 = v2.position
         return (p1 - p2).norm()
 
+    def degree(self):
+        return len(list(self.halfedges()))
+
     def halfedges(self):
         he = self.halfedge
         while True:

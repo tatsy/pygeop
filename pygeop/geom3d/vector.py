@@ -12,8 +12,8 @@ class Vector(object):
 
     def cross(self, v):
         x = self.y * v.z - self.z * v.y
-        y = self.x * v.x - self.x * v.z
-        z = self.z * v.y - self.y * v.x
+        y = self.z * v.x - self.x * v.z
+        z = self.x * v.y - self.y * v.x
         return Vector(x, y, z)
 
     def normalize(self):
@@ -37,7 +37,7 @@ class Vector(object):
         return Vector(-self.x, -self.y, -self.z)
 
     def __sub__(self, v):
-        return self + (-v)
+        return self.__add__(v.__neg__())
 
     def __mul__(self, v):
         if isinstance(v, Vector):

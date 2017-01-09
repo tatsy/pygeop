@@ -64,6 +64,9 @@ class TriMesh(object):
     def _make_halfedge(self):
         table = [ [] for i in range(len(self.vertices)) ]
 
+        self.halfedges.clear()
+        self.faces.clear()
+
         for i in range(0, len(self.indices), 3):
             he0 = Halfedge()
             he1 = Halfedge()

@@ -24,12 +24,19 @@ class TestVector(unittest.TestCase):
         self.assertEqual(ans, v1.x * v2.x + v1.y * v2.y + v1.z * v2.z)
 
     def test_cross(self):
+        v1 = Vector(1.0, 0.0, 0.0)
+        v2 = Vector(0.0, 1.0, 0.0)
+        v3 = v1.cross(v2)
+        self.assertEqual(v3.x, 0.0)
+        self.assertEqual(v3.y, 0.0)
+        self.assertEqual(v3.z, 1.0)
+
         v1 = Vector(random(), random(), random())
         v2 = Vector(random(), random(), random())
         v3 = v1.cross(v2)
         x = v1.y * v2.z - v1.z * v2.y
-        y = v1.x * v2.x - v1.x * v2.z
-        z = v1.z * v2.y - v1.y * v2.x
+        y = v1.z * v2.x - v1.x * v2.z
+        z = v1.x * v2.y - v1.y * v2.x
         self.assertEqual(v3.x, x)
         self.assertEqual(v3.y, y)
         self.assertEqual(v3.z, z)
