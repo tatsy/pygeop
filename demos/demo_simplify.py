@@ -1,6 +1,11 @@
+import os
+import sys
 import argparse
 
-from pygeop.geom3d import *
+sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), os.pardir))
+
+from pygeop.geom3d import TriMesh, simplify
+
 
 def main():
     parser = argparse.ArgumentParser(description='Demo for mesh simplification.')

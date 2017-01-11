@@ -2,10 +2,10 @@ import re
 import math
 
 from ..exception import PygpException
-from .vector import Vector
 from .vertex import Vertex
 from .halfedge import Halfedge
 from .face import Face
+from .objmesh import ObjMesh
 
 class TriMesh(object):
     def __init__(self, filename=''):
@@ -18,30 +18,21 @@ class TriMesh(object):
             self.load(filename)
 
     def load(self, filename):
-        with open(filename, 'r') as fp:
-            self.clear()
-            temp_vertices = []
-            temp_indices = []
-            for l in fp:
-                l = l.strip()
-                if l.startswith('v '):
-                    v = [ float(it) for it in re.split('\s+', l)[1:] ]
-                    temp_vertices.append((v[0], v[1], v[2]))
+        obj = ObjMesh(filename)
 
-                if l.startswith('f '):
-                    f = [ int(it) - 1 for it in re.split('\s+', l)[1:] ]
-                    temp_indices.extend([ f[0], f[1], f[2] ])
+        unique_vertices = {}
+        for i in obj.indices:
+            vx = obj.vertices[i * 3 + 0]
+            vy = obj.vertices[i * 3 + 1]
+            vz = obj.vertices[i * 3 + 2]
+            v = (vx, vy, vz)
 
-            unique_vertices = {}
-            for i in temp_indices:
-                v = temp_vertices[i]
+            if v not in unique_vertices:
+                unique_vertices[v] = len(self.vertices)
+                self.vertices.append(Vertex(v[0], v[1], v[2]))
+                self.vertices[-1].index = unique_vertices[v]
 
-                if v not in unique_vertices:
-                    unique_vertices[v] = len(self.vertices)
-                    self.vertices.append(Vertex(v[0], v[1], v[2]))
-                    self.vertices[-1].index = unique_vertices[v]
-
-                self.indices.append(unique_vertices[v])
+            self.indices.append(unique_vertices[v])
 
         self._make_halfedge()
 
@@ -78,21 +69,28 @@ class TriMesh(object):
 
         reverse_halfedge = target_halfedge.opposite
 
+        # Boundary halfedge
+        is_boundary = v_from.is_boundary and v_to.is_boundary
+        if target_halfedge.face is None:
+            target_halfedge, reverse_halfedge = reverse_halfedge, target_halfedge
+
         # Update v_to's halfedge
-        v_to.halfedge = target_halfedge.next.opposite.next
+        target_halfedge.vertex_to.halfedge = target_halfedge.next.opposite.next
 
         # Update halfedges of surrounding vertices
         target_halfedge.next.vertex_to.halfedge = target_halfedge.next.opposite
-        reverse_halfedge.next.vertex_to.halfedge = reverse_halfedge.next.opposite
+        if not is_boundary:
+            reverse_halfedge.next.vertex_to.halfedge = reverse_halfedge.next.opposite
 
         # Update topology
         he0 = target_halfedge.next.opposite
         he1 = target_halfedge.next.next.opposite
         he0.opposite, he1.opposite = he1, he0
 
-        he2 = reverse_halfedge.next.opposite
-        he3 = reverse_halfedge.next.next.opposite
-        he2.opposite, he3.opposite = he3, he2
+        if not is_boundary:
+            he2 = reverse_halfedge.next.opposite
+            he3 = reverse_halfedge.next.next.opposite
+            he2.opposite, he3.opposite = he3, he2
 
         for he in v_to.halfedges():
             he.vertex_from = v_to
@@ -100,7 +98,8 @@ class TriMesh(object):
 
         # Remove faces
         self.faces[target_halfedge.face.index] = None
-        self.faces[reverse_halfedge.face.index] = None
+        if not is_boundary:
+            self.faces[reverse_halfedge.face.index] = None
 
         # Delete halfedge
         self.halfedges[target_halfedge.index] = None
@@ -110,6 +109,13 @@ class TriMesh(object):
         self.vertices[v_from.index] = None
         if update_position is not None:
             self.vertices[v_to.index].position = update_position
+
+    def collapse_halfedge_boundary(self, target_halfedge):
+        reverse_halfedge = target_halfedge.opposite
+        if target_halfedge.face is None:
+            target_halfedge, reverse_halfedge = reverse_halfedge, target_halfedge
+
+
 
     def flip_halfedge(self, he):
         rev = he.opposite
@@ -239,6 +245,7 @@ class TriMesh(object):
             table[self.vertices[self.indices[i + 1]].index].append(he1)
             table[self.vertices[self.indices[i + 2]].index].append(he2)
 
+        # Set opposite halfedges
         for he0 in self.halfedges:
             for he1 in table[he0.vertex_to.index]:
                 if he0.vertex_from == he1.vertex_to and \
@@ -248,8 +255,32 @@ class TriMesh(object):
                    he1.opposite = he0
                    break
 
-            assert he0.opposite is not None
+            # Opposite halfedge not found
+            # Mark vertices as border vertices
+            if he0.opposite is None:
+                he0.vertex_from.is_boundary = True
+                he0.vertex_to.is_boundary = True
 
+                he1 = Halfedge()
+                he1.vertex_from = he0.vertex_to
+                he1.vertex_to = he0.vertex_from
+                he1.opposite = he0
+                he0.opposite = he1
+
+                he1.vertex_from.halfedge = he1
+
+                self.halfedges.append(he1)
+
+        # Process border vertices
+        for v in self.vertices:
+            if v.is_boundary:
+                he = v.halfedge
+                while True:
+                    if he.opposite.next is None:
+                        he.opposite.next = v.halfedge
+                        break
+
+                    he = he.opposite.next
 
         for i, he in enumerate(self.halfedges):
             he.index = i

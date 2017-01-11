@@ -7,6 +7,7 @@ class Vertex(object):
         self.z = z
         self.index= -1
         self.halfedge = None
+        self.is_boundary = False
 
     def copy(self):
         v = Vertex(self.x, self.y, self.z)
@@ -46,7 +47,7 @@ class Vertex(object):
         return ( he.vertex_to for he in self.halfedges() )
 
     def faces(self):
-        return ( he.face for he in self.halfedges() )
+        return ( he.face for he in self.halfedges() if he.face is not None )
 
     def __eq__(self, v):
         return self.x == v.x and self.y == v.y and self.z == v.z

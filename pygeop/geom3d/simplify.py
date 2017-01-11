@@ -6,9 +6,7 @@ from heapq import *
 import numpy as np
 
 from ..exception import PygpException
-from .trimesh import TriMesh
 from .vector import Vector
-from .halfedge import Halfedge
 
 class PriorityQueue(object):
     def __init__(self):
@@ -71,7 +69,9 @@ def progress_bar(x, total, width=50):
         bar[tick] = '>'
 
     bar = ''.join(bar)
-    print('[ {0:6.2f} % ] [ {1} ]'.format(100.0 * ratio, bar), end='\r', flush=True)
+    percent = min(100.0, 100.0 * ratio)
+    print('[ {0:6.2f} % ] [ {1} ]'.format(percent, bar),
+          end='\n' if tick >= width else '\r', flush=True)
 
 def compute_QEM(Q1, Q2, v1, v2):
     Q = np.identity(4)
@@ -87,6 +87,7 @@ def compute_QEM(Q1, Q2, v1, v2):
     return qem, Vector(v_bar[0], v_bar[1], v_bar[2])
 
 def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
+    EPS = 1.0e-6
     start_time = time.clock()
     nv = mesh.n_vertices()
 
@@ -98,8 +99,11 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
         n_remove = nv - remains
 
     # Compute matrix Q
+    if show_progress:
+        print('Computing matrix Q')
+
     Qs = [ np.zeros((4, 4)) for i in range(nv) ]
-    for t in mesh.faces:
+    for i, t in enumerate(mesh.faces):
         vs = list(t.vertices())
         assert len(vs) == 3
 
@@ -116,9 +120,21 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
         Qs[vs[1].index] += w * Q
         Qs[vs[2].index] += w * Q
 
+        if show_progress:
+            progress_bar(i, len(mesh.faces))
+
+    if show_progress:
+        progress_bar(len(mesh.faces), len(mesh.faces))
+
     # Push QEMs
+    if show_progress:
+        print('Computing QEMs')
+
     pque = PriorityQueue()
-    for he in mesh.halfedges:
+    for i, he in enumerate(mesh.halfedges):
+        # if he.vertex_from.is_boundary or he.vertex_to.is_boundary:
+        #     continue
+
         i1 = he.vertex_from.index
         i2 = he.vertex_to.index
         v1 = he.vertex_from.position
@@ -128,6 +144,12 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
         qem, v_bar = compute_QEM(Q1, Q2, v1, v2)
         pque.push(QEMNode(qem, i1, i2, v_bar))
 
+        if show_progress:
+            progress_bar(i, len(mesh.halfedges))
+
+    if show_progress:
+        progress_bar(len(mesh.halfedges), len(mesh.halfedges))
+
     removed = 0
     uftree = UnionFindTree(nv)
     while removed < n_remove:
@@ -135,6 +157,7 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
         try:
             qn = pque.pop()
         except IndexError:
+            print('Target number is not reached!')
             break
 
         ii, jj, v_bar = qn.ii, qn.jj, qn.vec
@@ -190,9 +213,13 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
             continue
 
         # Collapse halfedge
-        mesh.collapse_halfedge(v_j, v_i, v_bar)
-        uftree.merge(v_i.index, v_j.index)
-        assert v_i.index == uftree.root(v_j.index)
+        try:
+            mesh.collapse_halfedge(v_j, v_i, v_bar)
+            uftree.merge(v_i.index, v_j.index)
+            assert v_i.index == uftree.root(v_j.index)
+        except:
+            print('Error!')
+            pass
 
         # Check triangle shapes
         is_update = True
@@ -206,11 +233,13 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
 
                 e0 = v1 - v0
                 e1 = v2 - v0
-                a1 = math.acos(e0.dot(e1) / (e0.norm() * e1.norm()))
+                c1 = e0.dot(e1) / (e0.norm() * e1.norm())
+                a1 = math.acos(max(-1.0, min(c1, 1.0)))
 
                 e2 = v1 - v3
                 e3 = v2 - v3
-                a2 = math.acos(e2.dot(e3) / (e2.norm() * e3.norm()))
+                c2 = e2.dot(e3) / (e2.norm() * e3.norm())
+                a2 = math.acos(max(-1.0, min(c2, 1.0)))
 
                 if a1 + a2 > math.pi:
                     mesh.flip_halfedge(he)
@@ -228,6 +257,9 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
                 ps = [ v.position for v in vs ]
                 norm = (ps[1] - ps[0]).cross(ps[2] - ps[0])
                 w = norm.norm()
+                if w < EPS:
+                    continue
+
                 norm = norm / w
 
                 d = -norm.dot(ps[0])
@@ -242,13 +274,15 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
                 assert mesh.vertices[v1.index] is not None
                 assert mesh.vertices[v2.index] is not None
 
+                # if v1.is_boundary: continue
+                # if v2.is_boundary: continue
                 if v1.degree() <= 3: continue
                 if v2.degree() <= 3: continue
 
                 Q1 = Qs[v1.index]
                 Q2 = Qs[v2.index]
                 qem, v_bar = compute_QEM(Q1, Q2, v1.position, v2.position)
-                pque.push(QEMNode(qem, i, j, v_bar))
+                pque.push(QEMNode(qem, v1.index, v2.index, v_bar))
 
         # Progress
         removed += 1
