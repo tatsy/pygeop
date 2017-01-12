@@ -102,7 +102,7 @@ def compute_QEM(Q1, Q2, v1, v2):
     return qem, Vector(v_bar[0], v_bar[1], v_bar[2])
 
 def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
-    EPS = 1.0e-6
+    EPS = 1.0e-12
     start_time = time.clock()
     nv = mesh.n_vertices()
 
@@ -125,7 +125,7 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
         ps = [ v.position for v in vs ]
         norm = (ps[1] - ps[0]).cross(ps[2] - ps[0])
         w = norm.norm()
-        norm = norm / w
+        norm /= (w + EPS)
 
         d = -norm.dot(ps[0])
         pp = np.array([ norm.x, norm.y, norm.z, d ])
@@ -200,7 +200,7 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
                 continue
 
             ps = [ v.position for v in vs ]
-            norm_before = (ps[1] - ps[0]).cross(ps[2] - ps[0])
+            norm_before = (ps[1] - ps[0]).cross(ps[2] - ps[0])\
 
             is_found = False
             for i, v in enumerate(vs):
@@ -213,7 +213,8 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
 
             norm_after = (ps[1] - ps[0]).cross(ps[2] - ps[0])
 
-            if norm_before.dot(norm_after) <= 1.0e-6:
+            cos = norm_before.dot(norm_after) / (norm_before.norm() * norm_after.norm() + EPS)
+            if cos <= 1.0e-20:
                 is_flip = True
                 break
 
@@ -240,11 +241,16 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
             uftree.merge(v_i.index, v_j.index)
             assert v_i.index == uftree.root(v_j.index)
         except Exception as e:
-            raise e
+            print(e.message)
+            continue
+            # raise e
+
+        assert mesh.vertices[v_i.index] is not None
+        assert mesh.vertices[v_j.index] is None
 
         # Check triangle shapes
         is_update = True
-        update_vertices = chain([ v_i ], v_i.vertices())
+        update_vertices = [ v_i ] #list(chain([ v_i ], v_i.vertices()))
         while is_update:
             is_update = False
             for he in v_i.halfedges():
@@ -291,7 +297,7 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
                 ps = [ v.position for v in vs ]
                 norm = (ps[1] - ps[0]).cross(ps[2] - ps[0])
                 w = norm.norm()
-                norm = norm / (w + EPS)
+                norm /= (w + EPS)
 
                 d = -norm.dot(ps[0])
                 pp = np.array([ norm.x, norm.y, norm.z, d ])
@@ -306,10 +312,12 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
                 assert mesh.vertices[v2.index] is not None
 
                 if v1.degree() <= 3 or v2.degree() <= 3: continue
+                if v1.degree() >= 7 or v2.degree() >= 7: continue
 
                 Q1 = Qs[v1.index]
                 Q2 = Qs[v2.index]
                 qem, v_bar = compute_QEM(Q1, Q2, v1, v2)
+
                 pque.push(QEMNode(qem, v1.index, v2.index, v_bar))
 
     print('')
