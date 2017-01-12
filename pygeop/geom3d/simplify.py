@@ -21,6 +21,8 @@ class PriorityQueue(object):
         return self.h[0]
 
     def pop(self):
+        if len(self.h) == 0:
+            raise Exception('Queue is empty!')
         return heappop(self.h)
 
     def clear(self):
@@ -63,7 +65,7 @@ class QEMNode(object):
 
 def progress_bar(x, total, width=50):
     ratio = (x + 0.5) / total
-    tick = int(width * ratio)
+    tick = min(int(width * ratio), width - 1)
     bar = [ '=' ] * tick + [ ' ' ] * (width - tick)
     if tick != width:
         bar[tick] = '>'
@@ -71,16 +73,29 @@ def progress_bar(x, total, width=50):
     bar = ''.join(bar)
     percent = min(100.0, 100.0 * ratio)
     print('[ {0:6.2f} % ] [ {1} ]'.format(percent, bar),
-          end='\n' if tick >= width else '\r', flush=True)
+          end='\n' if x >= total else '\r', flush=True)
 
 def compute_QEM(Q1, Q2, v1, v2):
-    Q = np.identity(4)
-    Q[:3, :4] = (Q1 + Q2)[:3, :4]
-    if np.linalg.det(Q) < 1.0e-6:
-        v_bar = 0.5 * (v1 + v2)
+    if v1.is_boundary and v2.is_boundary:
+        v_bar = 0.5 * (v1.position + v2.position)
         v_bar = np.array([ v_bar.x, v_bar.y, v_bar.z, 1.0 ])
+
+    elif v1.is_boundary:
+        v = v1.position
+        v_bar = np.array([ v.x, v.y, v.z, 1.0 ])
+
+    elif v2.is_boundary:
+        v = v2.position
+        v_bar = np.array([ v.x, v.y, v.z, 1.0 ])
+
     else:
-        v_bar = np.linalg.solve(Q, np.array([0.0, 0.0, 0.0, 1.0]))
+        Q = np.identity(4)
+        Q[:3, :4] = (Q1 + Q2)[:3, :4]
+        if np.linalg.det(Q) < 1.0e-6:
+            v_bar = 0.5 * (v1.position + v2.position)
+            v_bar = np.array([ v_bar.x, v_bar.y, v_bar.z, 1.0 ])
+        else:
+            v_bar = np.linalg.solve(Q, np.array([0.0, 0.0, 0.0, 1.0]))
 
     qem = float(np.dot(v_bar, np.dot(Q1 + Q2, v_bar)))
 
@@ -132,13 +147,10 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
 
     pque = PriorityQueue()
     for i, he in enumerate(mesh.halfedges):
-        # if he.vertex_from.is_boundary or he.vertex_to.is_boundary:
-        #     continue
-
-        i1 = he.vertex_from.index
-        i2 = he.vertex_to.index
-        v1 = he.vertex_from.position
-        v2 = he.vertex_to.position
+        v1 = he.vertex_from
+        v2 = he.vertex_to
+        i1 = v1.index
+        i2 = v2.index
         Q1 = Qs[i1]
         Q2 = Qs[i2]
         qem, v_bar = compute_QEM(Q1, Q2, v1, v2)
@@ -156,8 +168,7 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
         # Find edge with minimum QEM
         try:
             qn = pque.pop()
-        except IndexError:
-            print('Target number is not reached!')
+        except Exception as e:
             break
 
         ii, jj, v_bar = qn.ii, qn.jj, qn.vec
@@ -168,6 +179,11 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
         if v_i is None or v_j is None:
             # None vertex is already removed
             continue
+
+        if not v_i.is_boundary and v_j.is_boundary:
+            ii, jj = jj, ii
+            v_i = mesh.vertices[ii]
+            v_j = mesh.vertices[jj]
 
         # Vertex with degree less than 4 should not be contracted
         if v_i.degree() <= 3 or v_j.degree() <= 3:
@@ -205,9 +221,15 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
             continue
 
         # Check face degeneration
+        neighbor_v_i = set([ v.index for v in v_i.vertices() ])
+        neighbor_v_j = set([ v.index for v in v_j.vertices() ])
+        neighbor_both = neighbor_v_i.intersection(neighbor_v_j)
+
         is_degenerate = False
-        is_degenerate |= any([ v.degree() < 3 for v in v_i.vertices() if v is not v_j ])
-        is_degenerate |= any([ v.degree() < 4 for v in v_j.vertices() if v is not v_i ])
+        for i in neighbor_both:
+            if mesh.vertices[i].degree() < 4:
+                is_degenerate = True
+                break
 
         if is_degenerate:
             continue
@@ -217,15 +239,19 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
             mesh.collapse_halfedge(v_j, v_i, v_bar)
             uftree.merge(v_i.index, v_j.index)
             assert v_i.index == uftree.root(v_j.index)
-        except:
-            print('Error!')
-            pass
+        except Exception as e:
+            raise e
 
         # Check triangle shapes
         is_update = True
+        update_vertices = chain([ v_i ], v_i.vertices())
         while is_update:
             is_update = False
             for he in v_i.halfedges():
+                if he.face is None or he.opposite.face is None:
+                    # Boundary halfedge
+                    continue
+
                 v0 = he.next.vertex_to.position
                 v1 = he.vertex_to.position
                 v2 = he.vertex_from.position
@@ -233,12 +259,12 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
 
                 e0 = v1 - v0
                 e1 = v2 - v0
-                c1 = e0.dot(e1) / (e0.norm() * e1.norm())
+                c1 = e0.dot(e1) / (e0.norm() * e1.norm() + EPS)
                 a1 = math.acos(max(-1.0, min(c1, 1.0)))
 
                 e2 = v1 - v3
                 e3 = v2 - v3
-                c2 = e2.dot(e3) / (e2.norm() * e3.norm())
+                c2 = e2.dot(e3) / (e2.norm() * e3.norm() + EPS)
                 a2 = math.acos(max(-1.0, min(c2, 1.0)))
 
                 if a1 + a2 > math.pi:
@@ -246,21 +272,26 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
                     is_update = True
                     break
 
+        # Progress
+        removed += 1
+        if show_progress:
+            if removed == n_remove or removed % max(1, n_remove // 1000) == 0:
+                progress_bar(removed, n_remove)
+
+        if removed == n_remove:
+            break
+
         # Update matrix Q
-        update_vertices = chain([ v_i ], v_i.vertices())
         for v in update_vertices:
             Qs[v.index] = np.zeros((4, 4))
-            for f in mesh.vertices[v.index].faces():
+            for f in v.faces():
                 vs = list(f.vertices())
                 assert len(vs) == 3
 
                 ps = [ v.position for v in vs ]
                 norm = (ps[1] - ps[0]).cross(ps[2] - ps[0])
                 w = norm.norm()
-                if w < EPS:
-                    continue
-
-                norm = norm / w
+                norm = norm / (w + EPS)
 
                 d = -norm.dot(ps[0])
                 pp = np.array([ norm.x, norm.y, norm.z, d ])
@@ -274,24 +305,18 @@ def simplify(mesh, ratio=0.5, remains=-1, show_progress=True):
                 assert mesh.vertices[v1.index] is not None
                 assert mesh.vertices[v2.index] is not None
 
-                # if v1.is_boundary: continue
-                # if v2.is_boundary: continue
-                if v1.degree() <= 3: continue
-                if v2.degree() <= 3: continue
+                if v1.degree() <= 3 or v2.degree() <= 3: continue
 
                 Q1 = Qs[v1.index]
                 Q2 = Qs[v2.index]
-                qem, v_bar = compute_QEM(Q1, Q2, v1.position, v2.position)
+                qem, v_bar = compute_QEM(Q1, Q2, v1, v2)
                 pque.push(QEMNode(qem, v1.index, v2.index, v_bar))
 
-        # Progress
-        removed += 1
-        if show_progress:
-            if removed == n_remove or removed % max(1, n_remove // 1000) == 0:
-                progress_bar(removed, n_remove)
-
     print('')
-    print('{} vertices removed!'.format(n_remove))
+    if removed < n_remove:
+        print('Target number is not reached!')
+
+    print('{} vertices removed!'.format(removed))
     print('{:.2f} sec elapsed!'.format(time.clock() - start_time))
 
     # Compact vertices and update indices for faces

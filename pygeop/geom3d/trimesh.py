@@ -69,56 +69,65 @@ class TriMesh(object):
 
         reverse_halfedge = target_halfedge.opposite
 
-        # Boundary halfedge
-        is_boundary = v_from.is_boundary and v_to.is_boundary
-        if target_halfedge.face is None:
-            target_halfedge, reverse_halfedge = reverse_halfedge, target_halfedge
-
         # Update v_to's halfedge
         target_halfedge.vertex_to.halfedge = target_halfedge.next.opposite.next
 
         # Update halfedges of surrounding vertices
-        target_halfedge.next.vertex_to.halfedge = target_halfedge.next.opposite
-        if not is_boundary:
+        if target_halfedge.face is not None:
+            target_halfedge.next.vertex_to.halfedge = target_halfedge.next.opposite
+
+        if reverse_halfedge.face is not None:
             reverse_halfedge.next.vertex_to.halfedge = reverse_halfedge.next.opposite
 
         # Update topology
-        he0 = target_halfedge.next.opposite
-        he1 = target_halfedge.next.next.opposite
-        he0.opposite, he1.opposite = he1, he0
+        if target_halfedge.face is not None:
+            he0 = target_halfedge.next.opposite
+            he1 = target_halfedge.next.next.opposite
+            he0.opposite, he1.opposite = he1, he0
 
-        if not is_boundary:
+        if reverse_halfedge.face is not None:
             he2 = reverse_halfedge.next.opposite
             he3 = reverse_halfedge.next.next.opposite
             he2.opposite, he3.opposite = he3, he2
 
-        for he in v_to.halfedges():
-            he.vertex_from = v_to
-            he.opposite.vertex_to = v_to
+        # Update topology for boundary vertices
+        if reverse_halfedge.face is None:
+            for he in target_halfedge.vertex_to.halfedges():
+                if he.opposite.next is reverse_halfedge:
+                    he.opposite.next = reverse_halfedge.next
+                    break
+
+        if target_halfedge.face is None:
+            for he in reverse_halfedge.vertex_to.halfedges():
+                if he.opposite.next is target_halfedge:
+                    he.opposite.next = target_halfedge.next
+                    break
+
+        for he in target_halfedge.vertex_to.halfedges():
+            he.vertex_from = target_halfedge.vertex_to
+            he.opposite.vertex_to = target_halfedge.vertex_to
+
+        # Delete/update vertex
+        self.vertices[target_halfedge.vertex_from.index] = None
+        if update_position is not None:
+            self.vertices[target_halfedge.vertex_to.index].position = update_position
 
         # Remove faces
-        self.faces[target_halfedge.face.index] = None
-        if not is_boundary:
+        if target_halfedge.face is not None:
+            self.faces[target_halfedge.face.index] = None
+
+        if reverse_halfedge.face is not None:
             self.faces[reverse_halfedge.face.index] = None
 
         # Delete halfedge
         self.halfedges[target_halfedge.index] = None
         self.halfedges[reverse_halfedge.index] = None
 
-        # Delete/update vertex
-        self.vertices[v_from.index] = None
-        if update_position is not None:
-            self.vertices[v_to.index].position = update_position
-
-    def collapse_halfedge_boundary(self, target_halfedge):
-        reverse_halfedge = target_halfedge.opposite
-        if target_halfedge.face is None:
-            target_halfedge, reverse_halfedge = reverse_halfedge, target_halfedge
-
-
 
     def flip_halfedge(self, he):
         rev = he.opposite
+        if rev.face is None:
+            raise PygpException('Flip method is called for boundary halfedge!')
 
         # Get surronding vertices, halfedges and faces
         v0 = he.vertex_to
