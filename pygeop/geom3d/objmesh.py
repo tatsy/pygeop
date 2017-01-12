@@ -179,10 +179,25 @@ class ObjMesh(object):
             normals[i2] += normal
 
         for n in normals:
-            n.normalize()
+            l = n.norm()
+            if l != 0.0:
+                n /= l
 
         self.normals = [ (n.x, n.y, n.z) for n in normals ]
 
+    @staticmethod
+    def from_data(indices, positions, texcoords=None, normals=None):
+        obj = ObjMesh()
+        obj.indices = indices
+        obj.vertices = positions
+
+        if texcoords is not None:
+            obj.texcoords = texcoords
+
+        if normals is not None:
+            obj.normals = normals
+
+        return obj
 
     def n_vertices(self):
         return self.vertices.size // 3
