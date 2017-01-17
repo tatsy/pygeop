@@ -199,6 +199,10 @@ class ObjMesh(object):
 
         return obj
 
+    def position_z(self):
+        z_indices = np.arange(0, self.vertices.size, 3) + 2
+        return self.vertices[z_indices]
+
     def n_vertices(self):
         return self.vertices.size // 3
 
